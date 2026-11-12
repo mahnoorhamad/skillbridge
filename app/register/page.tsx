@@ -2,12 +2,20 @@
 "use client";
 
 import { useState } from "react";
-import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
+import {
+  createUserWithEmailAndPassword,
+  sendEmailVerification,
+  signOut,
+  updateProfile,
+} from "firebase/auth";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import Link from "next/link";
 import { auth, db } from "../../lib/firebase";
+import { getFirebaseAuthErrorMessage } from "../../lib/firebase-auth-errors";
 
 const recoveryRoleKey = "skillbridge-registration-role";
+const registrationSuccessMessage =
+  "Account created. Verify your email before signing in.";
 
 export default function RegisterPage() {
   const [name, setName] = useState("");
@@ -17,18 +25,25 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [recoveryAvailable, setRecoveryAvailable] = useState(false);
+  const [registrationComplete, setRegistrationComplete] = useState(false);
+  const [registrationFailed, setRegistrationFailed] = useState(false);
 
   const handleRegister = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setMessage("");
     setLoading(true);
     setRecoveryAvailable(false);
+    setRegistrationComplete(false);
+    setRegistrationFailed(false);
     let createdUser = false;
+    let profileCreated = false;
+    let verificationEmailSent = false;
+    let signOutFailed = false;
 
     try {
       const userCredential = await createUserWithEmailAndPassword(
         auth,
-        email,
+        email.trim(),
         password
       );
 
@@ -47,10 +62,20 @@ export default function RegisterPage() {
       await setDoc(doc(db, "users", user.uid), {
         uid: user.uid,
         name,
-        email,
+        email: user.email ?? email.trim(),
         role,
         createdAt: serverTimestamp(),
       });
+      profileCreated = true;
+      await sendEmailVerification(user);
+      verificationEmailSent = true;
+      try {
+        await signOut(auth);
+      } catch (signOutError) {
+        signOutFailed = true;
+        throw signOutError;
+      }
+
       try {
         sessionStorage.removeItem(recoveryRoleKey);
       } catch (storageError) {
@@ -60,12 +85,30 @@ export default function RegisterPage() {
       setEmail("");
       setPassword("");
       setRole("freelancer");
-      setMessage("Account created successfully! You can continue to your dashboard.");
+      setMessage(registrationSuccessMessage);
+      setRegistrationComplete(true);
     } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Registration failed.";
-      setMessage(errorMessage);
-      setRecoveryAvailable(createdUser && !!auth.currentUser);
+      if (profileCreated && verificationEmailSent) {
+        setMessage(
+          signOutFailed
+            ? "Your account was created and a verification email was sent, but we couldn't end this session. Verify your email before signing in."
+            : registrationSuccessMessage
+        );
+        setRegistrationComplete(true);
+      } else if (profileCreated) {
+        setMessage(
+          "Your account and profile were created, but we couldn't send a verification email. Continue to sign in to request another."
+        );
+        setRegistrationComplete(true);
+      } else {
+        setMessage(
+          getFirebaseAuthErrorMessage(error, "Unable to complete registration.")
+        );
+        setRegistrationFailed(true);
+      }
+      setRecoveryAvailable(
+        createdUser && !profileCreated && !!auth.currentUser
+      );
     } finally {
       setLoading(false);
     }
@@ -127,7 +170,9 @@ export default function RegisterPage() {
         </button>
 
         {message && (
-          <p className="break-word text-center text-sm">{message}</p>
+          <p role="status" className="break-word text-center text-sm">
+            {message}
+          </p>
         )}
         {recoveryAvailable && (
           <div className="space-y-2 text-center">
@@ -143,12 +188,20 @@ export default function RegisterPage() {
             </Link>
           </div>
         )}
-        {message.startsWith("Account created successfully") && (
+        {registrationComplete && (
           <Link
-            href="/dashboard"
+            href="/login"
             className="block text-center font-semibold text-blue-700 hover:underline"
           >
-            Go to dashboard
+            Continue to sign in
+          </Link>
+        )}
+        {registrationFailed && (
+          <Link
+            href="/login"
+            className="block text-center font-semibold text-blue-700 hover:underline"
+          >
+            Sign in or reset your password
           </Link>
         )}
       </form>

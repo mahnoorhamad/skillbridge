@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 export default function Navbar() {
   const [user, setUser] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
   const router = useRouter();
 
   useEffect(() => {
@@ -21,9 +22,14 @@ export default function Navbar() {
   }, []);
 
   const handleLogout = async () => {
-    await signOut(auth);
-    setUser(false);
-    router.push("/login");
+    setLogoutError("");
+    try {
+      await signOut(auth);
+      setUser(false);
+      router.push("/login");
+    } catch {
+      setLogoutError("Unable to log out. Please try again.");
+    }
   };
 
   return (
@@ -92,6 +98,12 @@ export default function Navbar() {
           ☰
         </button>
       </div>
+
+      {logoutError && (
+        <p role="alert" className="px-6 pb-3 text-sm text-red-700">
+          {logoutError}
+        </p>
+      )}
 
       {menuOpen && (
         <div className="space-y-4 border-t border-gray-200 bg-white p-6 md:hidden">

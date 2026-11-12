@@ -49,6 +49,7 @@ export default function DashboardPage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [logoutError, setLogoutError] = useState("");
   const [recoveryAccount, setRecoveryAccount] =
     useState<RecoveryAccount | null>(null);
   const [recoveryName, setRecoveryName] = useState("");
@@ -138,8 +139,13 @@ export default function DashboardPage() {
   }, [loadAttempt, router]);
 
   const handleLogout = async () => {
-    await signOut(auth);
-    router.replace("/login");
+    setLogoutError("");
+    try {
+      await signOut(auth);
+      router.replace("/login");
+    } catch {
+      setLogoutError("Unable to log out. Please try again.");
+    }
   };
 
   const handleProfileRecovery = async (
@@ -251,6 +257,11 @@ export default function DashboardPage() {
   if (recoveryAccount) {
     return (
       <main className="min-h-screen bg-gray-100 p-6 text-gray-900 sm:p-10">
+        {logoutError && (
+          <p role="alert" className="mb-4 text-sm text-red-700">
+            {logoutError}
+          </p>
+        )}
         <form
           onSubmit={handleProfileRecovery}
           className="mx-auto w-full max-w-lg space-y-5 rounded-2xl bg-white p-6 shadow-lg sm:p-8"
@@ -363,6 +374,11 @@ export default function DashboardPage() {
     return (
       <main className="min-h-screen bg-gray-100 p-10 text-gray-900">
         <p className="font-medium">Could not load your profile.</p>
+        {logoutError && (
+          <p role="alert" className="mt-3 text-sm text-red-700">
+            {logoutError}
+          </p>
+        )}
         <button
           onClick={handleLogout}
           className="mt-4 rounded-lg bg-red-600 px-5 py-2 font-semibold text-white hover:bg-red-700"
@@ -379,6 +395,11 @@ export default function DashboardPage() {
         {recoveryMessage && (
           <p role="status" className="mb-6 rounded-lg bg-green-100 p-3 text-green-800">
             {recoveryMessage}
+          </p>
+        )}
+        {logoutError && (
+          <p role="alert" className="mb-6 text-sm text-red-700">
+            {logoutError}
           </p>
         )}
 

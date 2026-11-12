@@ -29,7 +29,7 @@ NEXT_PUBLIC_FIREBASE_APP_ID=
 
 These `NEXT_PUBLIC_` values are included in the browser bundle. They are Firebase client configuration, not server secrets. Never put service-account credentials or other private keys in these variables or commit `.env.local`.
 
-Enable the Email/Password sign-in provider in Firebase Authentication. For local sign-in, ensure `localhost` is in the Firebase Authentication authorized domains. Deploy the rules in [`firestore.rules`](./firestore.rules) to the same Firebase project before testing database operations.
+Enable the Email/Password sign-in provider and configure the email verification and password reset templates in Firebase Authentication. The app requires verified email addresses for Firestore access; new registrations receive a verification email, and unverified users are asked to verify before signing in. For local sign-in, ensure `localhost` is in the Firebase Authentication authorized domains. Deploy the rules in [`firestore.rules`](./firestore.rules) to the same Firebase project before testing database operations.
 
 Start the development server:
 
