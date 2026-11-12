@@ -1,0 +1,459 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userPath(userId) {
+      return /databases/$(database)/documents/users/$(userId);
+    }
+
+    function projectPath(projectId) {
+      return /databases/$(database)/documents/projects/$(projectId);
+    }
+
+    function proposalPath(proposalId) {
+      return /databases/$(database)/documents/proposals/$(proposalId);
+    }
+
+    function projectContactPath(projectId) {
+      return /databases/$(database)/documents/projectContacts/$(projectId);
+    }
+
+    function ownsUser(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function hasRole(expectedRole) {
+      return signedIn()
+        && exists(userPath(request.auth.uid))
+        && get(userPath(request.auth.uid)).data.role == expectedRole;
+    }
+
+    function validName(name) {
+      return name is string
+        && name.trim().size() > 0
+        && name.size() <= 120;
+    }
+
+    function validFreelancerProfile(data, userId) {
+      return data.keys().hasAll([
+          "uid",
+          "name",
+          "professionalTitle",
+          "bio",
+          "skills",
+          "experience",
+          "hourlyRate",
+          "portfolioUrl",
+          "githubUrl",
+          "updatedAt"
+        ])
+        && data.keys().hasOnly([
+          "uid",
+          "name",
+          "professionalTitle",
+          "bio",
+          "skills",
+          "experience",
+          "hourlyRate",
+          "portfolioUrl",
+          "githubUrl",
+          "updatedAt"
+        ])
+        && data.uid == userId
+        && data.name == get(userPath(userId)).data.name
+        && validName(data.name)
+        && data.professionalTitle is string
+        && data.professionalTitle.trim().size() > 0
+        && data.professionalTitle.size() <= 120
+        && data.bio is string
+        && data.bio.trim().size() > 0
+        && data.bio.size() <= 5000
+        && data.skills is string
+        && data.skills.trim().size() > 0
+        && data.skills.size() <= 1000
+        && data.experience is string
+        && data.experience.trim().size() > 0
+        && data.experience.size() <= 500
+        && data.hourlyRate is number
+        && data.hourlyRate > 0
+        && data.hourlyRate <= 100000
+        && data.portfolioUrl is string
+        && data.portfolioUrl.size() <= 2048
+        && (
+          data.portfolioUrl == ""
+          || data.portfolioUrl.matches("^https?://.+$")
+        )
+        && data.githubUrl is string
+        && data.githubUrl.size() <= 2048
+        && (
+          data.githubUrl == ""
+          || data.githubUrl.matches("^https?://.+$")
+        )
+        && data.updatedAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
+    function validUserProfileFields(data, userId) {
+      return data.keys().hasAll([
+          "uid",
+          "name",
+          "email",
+          "role",
+          "createdAt"
+        ])
+        && data.uid == userId
+        && validName(data.name)
+        && data.email is string
+        && data.email.size() <= 320
+        && data.role in ["freelancer", "client"]
+        && data.createdAt is timestamp;
+    }
+
+    function validProjectFields(data) {
+      return data.keys().hasAll([
+          "title",
+          "description",
+          "category",
+          "budget",
+          "clientId",
+          "status",
+          "createdAt"
+        ])
+        && data.title is string
+        && data.title.trim().size() > 0
+        && data.title.size() <= 120
+        && data.description is string
+        && data.description.trim().size() > 0
+        && data.description.size() <= 10000
+        && data.category in [
+          "Web Development",
+          "Graphic Design",
+          "AI & Machine Learning",
+          "Digital Marketing",
+          "Mobile App Development",
+          "Content Writing"
+        ]
+        && data.budget is number
+        && data.budget > 0
+        && data.clientId is string
+        && data.clientId.size() > 0
+        && (
+          !data.keys().hasAny(["clientEmail"])
+          || (
+            data.clientEmail is string
+            && data.clientEmail.size() <= 320
+          )
+        )
+        && data.status in ["open", "closed"]
+        && data.createdAt is timestamp;
+    }
+
+    function validProjectCreate(data, userId) {
+      return data.keys().hasOnly([
+          "title",
+          "description",
+          "category",
+          "budget",
+          "clientId",
+          "status",
+          "createdAt"
+        ])
+        && validProjectFields(data)
+        && data.clientId == userId
+        && data.status == "open"
+        && data.createdAt == request.time;
+    }
+
+    function validProjectContactCreate(data, userId, projectId) {
+      let project = projectPath(projectId);
+
+      return data.keys().hasOnly([
+          "clientId",
+          "clientEmail",
+          "createdAt"
+        ])
+        && data.keys().hasAll(["clientId", "clientEmail", "createdAt"])
+        && data.clientId == userId
+        && request.auth.token.email is string
+        && data.clientEmail == request.auth.token.email
+        && data.createdAt == request.time
+        && existsAfter(project)
+        && getAfter(project).data.clientId == userId;
+    }
+
+    function validProjectUpdate(data, oldData) {
+      return validProjectFields(data)
+        && data.clientId == oldData.clientId
+        && data.createdAt == oldData.createdAt
+        && data.status == oldData.status;
+    }
+
+    function openProjectNotOwnedBy(projectId, userId) {
+      let path = projectPath(projectId);
+
+      return exists(path)
+        && get(path).data.status == "open"
+        && !get(path).data.keys().hasAny(["acceptedProposalId"])
+        && get(path).data.clientId != userId;
+    }
+
+    function ownsProject(projectId, userId) {
+      let path = projectPath(projectId);
+
+      return exists(path)
+        && get(path).data.clientId == userId;
+    }
+
+    function validProposalAcceptanceClaim(projectId, proposalId) {
+      let path = proposalPath(proposalId);
+      let project = projectPath(projectId);
+
+      return exists(path)
+        && get(path).data.projectId == projectId
+        && get(path).data.status == "pending"
+        && existsAfter(path)
+        && getAfter(path).data.projectId == projectId
+        && getAfter(path).data.status == "accepted"
+        && exists(project)
+        && get(project).data.status == "open"
+        && !get(project).data.keys().hasAny(["acceptedProposalId"])
+        && existsAfter(project)
+        && getAfter(project).data.status == "closed"
+        && getAfter(project).data.acceptedProposalId == proposalId;
+    }
+
+    function proposalDocumentId(projectId, freelancerId) {
+      return projectId.toUtf8().toBase64().replace("=", "")
+        + "."
+        + freelancerId.toUtf8().toBase64().replace("=", "");
+    }
+
+    function proposalIdHasFreelancerSuffix(proposalId, freelancerId) {
+      let suffix = "."
+        + freelancerId.toUtf8().toBase64().replace("=", "");
+
+      return proposalId.size() > suffix.size()
+        && proposalId[proposalId.size() - suffix.size():] == suffix;
+    }
+
+    function validProposalCreate(proposalId) {
+      let data = request.resource.data;
+      let profile = get(userPath(request.auth.uid));
+
+      return data.keys().hasAll([
+          "projectId",
+          "freelancerId",
+          "freelancerEmail",
+          "coverLetter",
+          "proposedBudget",
+          "deliveryTime",
+          "status",
+          "createdAt"
+        ])
+        && data.keys().hasOnly([
+          "projectId",
+          "freelancerId",
+          "freelancerEmail",
+          "coverLetter",
+          "proposedBudget",
+          "deliveryTime",
+          "status",
+          "createdAt"
+        ])
+        && data.projectId is string
+        && data.projectId.size() > 0
+        && data.freelancerId == request.auth.uid
+        && profile.data.role == "freelancer"
+        && request.auth.token.email is string
+        && data.freelancerEmail == request.auth.token.email
+        && profile.data.email == data.freelancerEmail
+        && proposalId == proposalDocumentId(
+          data.projectId,
+          request.auth.uid
+        )
+        && data.coverLetter is string
+        && data.coverLetter.trim().size() > 0
+        && data.coverLetter.size() <= 5000
+        && data.proposedBudget is number
+        && data.proposedBudget > 0
+        && data.deliveryTime is string
+        && data.deliveryTime.trim().size() > 0
+        && data.deliveryTime.size() <= 100
+        && data.status == "pending"
+        && data.createdAt == request.time
+        && openProjectNotOwnedBy(data.projectId, request.auth.uid);
+    }
+
+    match /users/{userId} {
+      allow get: if ownsUser(userId);
+      allow list: if false;
+
+      allow create: if ownsUser(userId)
+        && request.auth.token.email is string
+        && validUserProfileFields(request.resource.data, userId)
+        && request.resource.data.keys().hasOnly([
+          "uid",
+          "name",
+          "email",
+          "role",
+          "createdAt"
+        ])
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.createdAt == request.time;
+
+      // The current application has no profile editor; name is the only
+      // profile field currently permitted to change.
+      allow update: if ownsUser(userId)
+        && validUserProfileFields(request.resource.data, userId)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data)
+          .affectedKeys().hasOnly(["name"]);
+
+      allow delete: if false;
+    }
+
+    match /publicFreelancerProfiles/{userId} {
+      allow get, list: if signedIn();
+
+      allow create: if ownsUser(userId)
+        && hasRole("freelancer")
+        && validFreelancerProfile(request.resource.data, userId);
+
+      allow update: if ownsUser(userId)
+        && hasRole("freelancer")
+        && validFreelancerProfile(request.resource.data, userId)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.name == resource.data.name;
+
+      allow delete: if false;
+    }
+
+    match /projects/{projectId} {
+      // Legacy documents containing clientEmail are owner-only until migrated.
+      allow get, list: if signedIn()
+        && (
+          !resource.data.keys().hasAny(["clientEmail"])
+          || resource.data.clientId == request.auth.uid
+        );
+
+      allow create: if hasRole("client")
+        && validProjectCreate(request.resource.data, request.auth.uid)
+        && existsAfter(projectContactPath(projectId))
+        && getAfter(projectContactPath(projectId)).data.clientId
+          == request.auth.uid
+        && request.auth.token.email is string
+        && getAfter(projectContactPath(projectId)).data.clientEmail
+          == request.auth.token.email;
+
+      // Owners may edit the four supported fields, or atomically close the
+      // project while accepting one pending proposal.
+      allow update: if signedIn()
+        && resource.data.clientId == request.auth.uid
+        && (
+          (
+            request.resource.data.diff(resource.data)
+              .affectedKeys()
+              .hasOnly(["title", "description", "category", "budget"])
+            && validProjectUpdate(request.resource.data, resource.data)
+          )
+          || (
+            request.resource.data.diff(resource.data)
+              .affectedKeys().hasOnly(["status", "acceptedProposalId"])
+            && !resource.data.keys().hasAny(["acceptedProposalId"])
+            && request.resource.data.acceptedProposalId is string
+            && resource.data.status == "open"
+            && request.resource.data.status == "closed"
+            && validProjectFields(request.resource.data)
+            && request.resource.data.clientId == resource.data.clientId
+            && request.resource.data.createdAt == resource.data.createdAt
+            && validProposalAcceptanceClaim(
+              projectId,
+              request.resource.data.acceptedProposalId
+            )
+          )
+        );
+
+      allow delete: if signedIn()
+        && resource.data.clientId == request.auth.uid;
+    }
+
+    match /projectContacts/{projectId} {
+      allow get: if signedIn()
+        && resource.data.clientId == request.auth.uid
+        && ownsProject(projectId, request.auth.uid);
+      allow list: if false;
+
+      allow create: if hasRole("client")
+        && validProjectContactCreate(
+          request.resource.data,
+          request.auth.uid,
+          projectId
+        );
+
+      allow update, delete: if false;
+    }
+
+    match /proposals/{proposalId} {
+      // A freelancer can check their deterministic ID before creation and
+      // read an existing proposal only when its stored owner and ID agree.
+      allow get: if signedIn()
+        && (
+          (
+            proposalIdHasFreelancerSuffix(proposalId, request.auth.uid)
+            && (
+              !exists(proposalPath(proposalId))
+              || (
+                resource.data.freelancerId == request.auth.uid
+                && resource.data.projectId is string
+                && proposalId == proposalDocumentId(
+                  resource.data.projectId,
+                  request.auth.uid
+                )
+              )
+            )
+          )
+          || (
+            hasRole("client")
+            && resource.data.projectId is string
+            && ownsProject(resource.data.projectId, request.auth.uid)
+          )
+        );
+
+      allow list: if signedIn()
+        && hasRole("client")
+        && resource.data.projectId is string
+        && ownsProject(resource.data.projectId, request.auth.uid);
+
+      allow create: if hasRole("freelancer")
+        && validProposalCreate(proposalId);
+
+      allow update: if hasRole("client")
+        && resource.data.projectId is string
+        && ownsProject(resource.data.projectId, request.auth.uid)
+        && resource.data.status == "pending"
+        && request.resource.data.status in ["accepted", "rejected"]
+        && request.resource.data.diff(resource.data)
+          .affectedKeys().hasOnly(["status"])
+        && (
+          request.resource.data.status == "rejected"
+          || (
+            existsAfter(projectPath(resource.data.projectId))
+            && get(projectPath(resource.data.projectId)).data.status == "open"
+            && getAfter(projectPath(resource.data.projectId))
+              .data.status == "closed"
+            && getAfter(projectPath(resource.data.projectId))
+              .data.acceptedProposalId == proposalId
+          )
+        );
+
+      allow delete: if false;
+    }
+  }
+}
